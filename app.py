@@ -88,11 +88,7 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
     total_labels_w = (2 * l_pts) + gap_pts
     left_margin_pts = (SHEET_SIZE - total_labels_w) / 2
 
-    # --- ADD HL (HEADLAY) HEADING ---
-    # Placed in the center of the top 10mm margin
-    c.setFont("Helvetica-Bold", 12)
-    c.drawCentredString(SHEET_SIZE / 2.0, SHEET_SIZE - (top_gripper_pts / 2.0) - 2, "HL")
-
+    # DRAW 6 LABELS
     for row in range(3): 
         for col in range(2):
             x = left_margin_pts + (col * (l_pts + gap_pts))
@@ -110,10 +106,10 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
     return pdf_output
 
 # --- UI ---
-st.set_page_config(page_title="GTO 9x9 HL Automator", layout="centered")
-st.title("🎯 GTO Smart Plate Maker (with HL)")
+st.set_page_config(page_title="GTO 9x9 Precision", layout="centered")
+st.title("🎯 GTO 9x9 Smart Plate Maker")
 
-st.info("Configured: 9x9\" Sheet | HL Headlay Added | 10mm Gripper")
+st.info("Configured: 9x9\" Sheet | 10mm Gripper | 10mm Gaps")
 
 with st.expander("✨ Smart Options", expanded=True):
     col_a, col_b = st.columns(2)
@@ -125,15 +121,15 @@ with st.expander("✨ Smart Options", expanded=True):
 uploaded_file = st.file_uploader("Upload Image from Canva", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
-    if st.button('🚀 GENERATE 9x9 PDF with HL', use_container_width=True):
+    if st.button('🚀 GENERATE 9x9 PDF', use_container_width=True):
         st.session_state.pdf_data = generate_pdf(uploaded_file, auto_crop, black_only)
-        st.success("9x9 PDF with HL Mark Generated!")
+        st.success("9x9 PDF Generated!")
 
     if "pdf_data" in st.session_state:
-        st.download_button("📥 DOWNLOAD PDF", data=st.session_state.pdf_data, file_name="GTO_9x9_HL.pdf", mime="application/pdf", use_container_width=True)
+        st.download_button("📥 DOWNLOAD PDF", data=st.session_state.pdf_data, file_name="GTO_9x9_Sheet.pdf", mime="application/pdf", use_container_width=True)
         
         if st.button('📧 SEND TO CTC (colorxctp@yahoo.com)', use_container_width=True):
             with st.spinner('Sending...'):
                 if send_email_to_ctc(st.session_state.pdf_data):
                     st.balloons()
-                    st.success("Sent to CTC! HL mark included.")
+                    st.success("Sent to CTC plant!")
