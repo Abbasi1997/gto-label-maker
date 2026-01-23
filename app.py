@@ -14,12 +14,11 @@ from email import encoders
 LABEL_W_IN = 4.072965
 LABEL_H_IN = 2.56757
 SHEET_SIZE = 10.0 * inch
-DPI = 600 
+# Adjusted to 450 DPI for perfect balance of sharpness and < 1MB size
+DPI = 450 
 
 def send_email_to_ctc(pdf_buffer):
-    """Function to send the generated PDF via email"""
     try:
-        # Fetching credentials from Streamlit Secrets
         SENDER_EMAIL = st.secrets["email_user"]
         SENDER_PASSWORD = st.secrets["email_password"]
         SMTP_SERVER = st.secrets.get("smtp_server", "smtp.gmail.com")
@@ -28,20 +27,17 @@ def send_email_to_ctc(pdf_buffer):
         RECEIVER_EMAIL = "colorxctp@yahoo.com"
         SUBJECT = "Rabnawaz Plate GTO"
 
-        # Create email container
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = RECEIVER_EMAIL
         msg['Subject'] = SUBJECT
 
-        # Attach PDF
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(pdf_buffer.getvalue())
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', 'attachment; filename="GTO_Precision_Sheet.pdf"')
+        part.add_header('Content-Disposition', 'attachment; filename="Rabnawaz_GTO_Plate.pdf"')
         msg.attach(part)
 
-        # Connect and Send
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
@@ -50,26 +46,38 @@ def send_email_to_ctc(pdf_buffer):
         st.error(f"Email Error: {e}")
         return False
 
-def generate_pdf(uploaded_file, trim_mm, use_cmyk, left_m, top_m, h_gap, v_gap):
-    # --- LOGIC UNTOUCHED AS REQUESTED ---
+def generate_pdf(uploaded_file, trim_mm, black_only, left_m, top_m, h_gap, v_gap):
     img = Image.open(uploaded_file)
+    
+    # 1. TRIM
     if trim_mm > 0:
         w, h = img.size
         t_px_h = (trim_mm / (LABEL_W_IN * 25.4)) * w
         t_px_v = (trim_mm / (LABEL_H_IN * 25.4)) * h
         img = ImageOps.crop(img, (int(t_px_h), int(t_px_v), int(t_px_h), int(t_px_v)))
 
-    if use_cmyk: img = img.convert("CMYK")
-    elif img.mode != "RGB": img = img.convert("RGB")
+    # 2. BLACK ONLY OPTIMIZATION (Grayscale)
+    # Converting to "L" (8-bit pixels, black and white) drastically reduces file size
+    if black_only:
+        img = img.convert("L")
+    else:
+        img = img.convert("RGB")
     
-    target_w_px, target_h_px = int(LABEL_W_IN * DPI), int(LABEL_H_IN * DPI)
+    # 3. HIGH-RES RESIZING
+    target_w_px = int(LABEL_W_IN * DPI)
+    target_h_px = int(LABEL_H_IN * DPI)
     img = img.resize((target_w_px, target_h_px), Image.Resampling.LANCZOS)
     
+    # 4. COMPRESSION (Optimized for < 1MB)
     img_buffer = BytesIO()
-    img.save(img_buffer, format="JPEG", quality=95, subsampling=0)
+    # JPEG at 85 quality provides excellent plate sharpness while staying very small
+    img.save(img_buffer, format="JPEG", quality=85, optimize=True, subsampling=0)
     img_buffer.seek(0)
+    
+    # Embed image once to save space
     reader = ImageReader(img_buffer)
 
+    # 5. PDF CONSTRUCTION
     pdf_output = BytesIO()
     c = canvas.Canvas(pdf_output, pagesize=(SHEET_SIZE, SHEET_SIZE))
     l_pts, h_pts = LABEL_W_IN * inch, LABEL_H_IN * inch
@@ -87,11 +95,11 @@ def generate_pdf(uploaded_file, trim_mm, use_cmyk, left_m, top_m, h_gap, v_gap):
     pdf_output.seek(0)
     return pdf_output
 
-# --- UI (ADDED EMAIL BUTTON ONLY) ---
+# --- UI ---
 st.set_page_config(page_title="GTO Precision Automator", layout="centered")
 st.title("🎯 GTO Precision Plate Maker")
 
-with st.expander("📏 Placement & Nudge Settings", expanded=False):
+with st.expander("📏 Placement & Nudge Settings"):
     c1, c2 = st.columns(2)
     with c1:
         left_margin = st.slider("Left Margin (in)", 0.0, 2.0, 0.65, 0.01)
@@ -100,25 +108,27 @@ with st.expander("📏 Placement & Nudge Settings", expanded=False):
         top_margin = st.slider("Top Margin (in)", 0.0, 2.0, 0.40, 0.01)
         v_gap = st.slider("Vertical Gap (in)", 0.0, 1.5, 0.65, 0.01)
 
-with st.expander("🎨 Advanced Print Quality"):
+with st.expander("🎨 Print Optimization", expanded=True):
     col_a, col_b = st.columns(2)
-    with col_a: use_cmyk = st.toggle("CMYK Mode", value=True)
-    with col_b: trim_val = st.slider("Edge Trim (mm)", 0.0, 5.0, 0.0, 0.5)
+    with col_a:
+        # Defaulting to True as per your requirement for Black Only
+        black_only = st.toggle("Black Plate Only (Smallest File)", value=True)
+    with col_b:
+        trim_val = st.slider("Edge Trim (mm)", 0.0, 5.0, 0.0, 0.5)
 
 uploaded_file = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
-    if st.button('🚀 GENERATE PRECISION PDF', use_container_width=True):
-        st.session_state.pdf_data = generate_pdf(uploaded_file, trim_val, use_cmyk, left_margin, top_margin, h_gap, v_gap)
-        st.success("PDF Ready!")
+    if st.button('🚀 GENERATE OPTIMIZED PDF', use_container_width=True):
+        st.session_state.pdf_data = generate_pdf(uploaded_file, trim_val, black_only, left_margin, top_margin, h_gap, v_gap)
+        size_kb = len(st.session_state.pdf_data.getvalue()) // 1024
+        st.success(f"PDF Generated! Size: {size_kb} KB")
 
     if "pdf_data" in st.session_state:
-        # Download Button
-        st.download_button("📥 DOWNLOAD PDF", data=st.session_state.pdf_data, file_name="GTO_Sheet.pdf", mime="application/pdf", use_container_width=True)
+        st.download_button("📥 DOWNLOAD PDF", data=st.session_state.pdf_data, file_name="Rabnawaz_GTO_Plate.pdf", mime="application/pdf", use_container_width=True)
         
-        # New Email Button
         if st.button('📧 SEND TO CTC (colorxctp@yahoo.com)', use_container_width=True):
-            with st.spinner('Sending email to CTC plant...'):
+            with st.spinner('Sending...'):
                 if send_email_to_ctc(st.session_state.pdf_data):
                     st.balloons()
                     st.success("Email sent to colorxctp@yahoo.com!")
