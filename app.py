@@ -81,18 +81,19 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
     # DIMENSIONS IN POINTS
     l_pts = LABEL_W_IN * inch
     h_pts = LABEL_H_IN * inch
-    gap_pts = 10 * mm         
+    inner_gap_pts = 8 * mm         
     top_gripper_pts = 10 * mm 
     
     # AUTO-CENTERING ON X-AXIS
-    total_labels_w = (2 * l_pts) + gap_pts
+    total_labels_w = (2 * l_pts) + inner_gap_pts
     left_margin_pts = (SHEET_SIZE - total_labels_w) / 2
 
     # DRAW 6 LABELS
     for row in range(3): 
         for col in range(2):
-            x = left_margin_pts + (col * (l_pts + gap_pts))
-            y = SHEET_SIZE - top_gripper_pts - h_pts - (row * (h_pts + gap_pts))
+            x = left_margin_pts + (col * (l_pts + inner_gap_pts))
+            # Start after 10mm gripper, then subtract current row's height and 8mm internal gaps
+            y = SHEET_SIZE - top_gripper_pts - h_pts - (row * (h_pts + inner_gap_pts))
             
             c.drawImage(reader, x, y, width=l_pts, height=h_pts)
             
@@ -109,7 +110,7 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
 st.set_page_config(page_title="GTO 9x9 Precision", layout="centered")
 st.title("🎯 GTO 9x9 Smart Plate Maker")
 
-st.info("Configured: 9x9\" Sheet | 10mm Gripper | 10mm Gaps")
+st.info("Configured: 9x9\" Sheet | 10mm Gripper | 8mm Gaps")
 
 with st.expander("✨ Smart Options", expanded=True):
     col_a, col_b = st.columns(2)
