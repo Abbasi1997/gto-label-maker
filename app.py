@@ -9,7 +9,6 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-import pytesseract  # Requires Tesseract OCR installed
 import re
 
 # --- HARD-CODED PRECISION SIZES ---
@@ -21,32 +20,39 @@ DPI = 450
 def extract_file_info(img):
     """Extracts text from image to generate a smart filename."""
     try:
+        import pytesseract
         # Pre-process image for better OCR
         gray = img.convert("L")
+        # Increase contrast for better OCR reading
+        gray = ImageOps.autocontrast(gray, cutoff=2)
         text = pytesseract.image_to_string(gray)
         
         # Default values
-        importer = "Unknown Importer"
-        exporter = "LGC" if "LGC" in text.upper() else "Pacific" if "PACIFIC" in text.upper() else "Unknown Exporter"
-        weight = "No Weight"
-        size = "No Size"
-        grade = "No Grade"
+        importer = "Unknown_Importer"
+        exporter = "LGC" if "LGC" in text.upper() else "Pacific" if "PACIFIC" in text.upper() else "Unknown_Exporter"
+        weight = "NoWeight"
+        size = "NoSize"
+        grade = "NoGrade"
 
-        # Simple Regex to find patterns (adjust based on your typical label layout)
+        # Search for Weight (e.g., 50 KG)
         weight_match = re.search(r'(\d+\s?KG)', text, re.IGNORECASE)
-        if weight_match: weight = weight_match.group(1)
+        if weight_match: weight = weight_match.group(1).replace(" ", "")
 
+        # Search for Size (e.g., 10x10 mm)
         size_match = re.search(r'(\d+[\s?xX]\d+\s?mm)', text, re.IGNORECASE)
-        if size_match: size = size_match.group(1)
+        if size_match: size = size_match.group(1).replace(" ", "")
 
-        grade_match = re.search(r'(Grade[:\s]+)([A-Za-z0-9\s]+)', text, re.IGNORECASE)
-        if grade_match: grade = grade_match.group(2).strip().split('\n')[0]
+        # Search for Grade
+        grade_match = re.search(r'Grade[:\s]+([A-Za-z0-9]+)', text, re.IGNORECASE)
+        if grade_match: grade = grade_match.group(1)
 
-        # Attempt to get first line as Importer if not found
+        # Get the first line as Importer (usually company name at top)
         lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 3]
-        if lines: importer = lines[0]
+        if lines: importer = lines[0][:20].replace(" ", "_")
 
         return f"{importer}, {exporter}, {weight}, {size}, {grade}"
+    except ImportError:
+        return "GTO_9x9_Plate_Output"
     except Exception:
         return "GTO_9x9_Plate_Output"
 
@@ -92,7 +98,7 @@ def send_email_to_ctc(pdf_buffer, filename):
 def generate_pdf(uploaded_file, auto_crop, black_only):
     img = Image.open(uploaded_file)
     
-    # Generate Smart Filename
+    # Generate Smart Filename based on content
     extracted_name = extract_file_info(img)
     
     if auto_crop:
@@ -149,6 +155,12 @@ st.title("🎯 GTO 9x9 Smart Plate Maker")
 
 st.info("Configured: 9x9\" Sheet | 10mm Gripper | 8mm Gaps")
 
+# Check if pytesseract is available
+try:
+    import pytesseract
+except ImportError:
+    st.warning("⚠️ OCR Library missing. Filenames will use defaults. Please add 'pytesseract' to requirements.txt")
+
 with st.expander("✨ Smart Options", expanded=True):
     col_a, col_b = st.columns(2)
     with col_a:
@@ -163,13 +175,13 @@ if uploaded_file:
         pdf_data, auto_name = generate_pdf(uploaded_file, auto_crop, black_only)
         st.session_state.pdf_data = pdf_data
         st.session_state.auto_name = auto_name
-        st.success(f"Generated: {auto_name}")
+        st.success(f"Filename Generated: {auto_name}")
 
     if "pdf_data" in st.session_state:
         final_filename = f"{st.session_state.auto_name}.pdf"
         
         st.download_button(
-            label="📥 DOWNLOAD PDF", 
+            label=f"📥 DOWNLOAD: {final_filename}", 
             data=st.session_state.pdf_data, 
             file_name=final_filename, 
             mime="application/pdf", 
