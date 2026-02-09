@@ -21,40 +21,43 @@ def extract_file_info(img):
     """Extracts text from image to generate a smart filename."""
     try:
         import pytesseract
-        # Pre-process image for better OCR
-        gray = img.convert("L")
-        # Increase contrast for better OCR reading
-        gray = ImageOps.autocontrast(gray, cutoff=2)
-        text = pytesseract.image_to_string(gray)
+        # 1. Image Pre-processing for better reading
+        img_for_ocr = img.convert("L")
+        img_for_ocr = ImageOps.autocontrast(img_for_ocr, cutoff=2)
         
-        # Default values
+        # 2. Extract Text
+        text = pytesseract.image_to_string(img_for_ocr)
+        text_upper = text.upper()
+        
+        # 3. Default values
         importer = "Unknown_Importer"
-        exporter = "LGC" if "LGC" in text.upper() else "Pacific" if "PACIFIC" in text.upper() else "Unknown_Exporter"
+        exporter = "LGC" if "LGC" in text_upper else "Pacific" if "PACIFIC" in text_upper else "Unknown_Exporter"
         weight = "NoWeight"
         size = "NoSize"
         grade = "NoGrade"
 
-        # Search for Weight (e.g., 50 KG)
-        weight_match = re.search(r'(\d+\s?KG)', text, re.IGNORECASE)
-        if weight_match: weight = weight_match.group(1).replace(" ", "")
+        # 4. Search patterns
+        # Weight (look for numbers followed by KG)
+        w_match = re.search(r'(\d+\.?\d*)\s?KG', text_upper)
+        if w_match: weight = w_match.group(0).replace(" ", "")
 
-        # Search for Size (e.g., 10x10 mm)
-        size_match = re.search(r'(\d+[\s?xX]\d+\s?mm)', text, re.IGNORECASE)
-        if size_match: size = size_match.group(1).replace(" ", "")
+        # Size (look for something like 100X100MM or 100 x 100 mm)
+        s_match = re.search(r'(\d+\s?[xX]\s?\d+\s?MM)', text_upper)
+        if s_match: size = s_match.group(0).replace(" ", "")
 
-        # Search for Grade
-        grade_match = re.search(r'Grade[:\s]+([A-Za-z0-9]+)', text, re.IGNORECASE)
-        if grade_match: grade = grade_match.group(1)
+        # Grade (look for 'Grade' followed by text/number)
+        g_match = re.search(r'GRADE[:\s]*([A-Z0-9]+)', text_upper)
+        if g_match: grade = g_match.group(1)
 
-        # Get the first line as Importer (usually company name at top)
-        lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 3]
-        if lines: importer = lines[0][:20].replace(" ", "_")
+        # Importer (Take the first line of the label)
+        lines = [l.strip() for l in text.split('\n') if len(l.strip()) > 3]
+        if lines:
+            importer = re.sub(r'[^a-zA-Z0-9]', '_', lines[0])[:20]
 
         return f"{importer}, {exporter}, {weight}, {size}, {grade}"
-    except ImportError:
-        return "GTO_9x9_Plate_Output"
+
     except Exception:
-        return "GTO_9x9_Plate_Output"
+        return "Manual_Input_Required"
 
 def smart_crop_to_border(img):
     gray = img.convert("L")
@@ -98,7 +101,7 @@ def send_email_to_ctc(pdf_buffer, filename):
 def generate_pdf(uploaded_file, auto_crop, black_only):
     img = Image.open(uploaded_file)
     
-    # Generate Smart Filename based on content
+    # Run OCR before cropping
     extracted_name = extract_file_info(img)
     
     if auto_crop:
@@ -118,29 +121,22 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
     img_buffer.seek(0)
     reader = ImageReader(img_buffer)
 
-    # PDF SETUP
     pdf_output = BytesIO()
     c = canvas.Canvas(pdf_output, pagesize=(SHEET_SIZE, SHEET_SIZE))
     
-    # DIMENSIONS IN POINTS
     l_pts = LABEL_W_IN * inch
     h_pts = LABEL_H_IN * inch
     inner_gap_pts = 8 * mm         
     top_gripper_pts = 10 * mm 
     
-    # AUTO-CENTERING ON X-AXIS
     total_labels_w = (2 * l_pts) + inner_gap_pts
     left_margin_pts = (SHEET_SIZE - total_labels_w) / 2
 
-    # DRAW 6 LABELS
     for row in range(3): 
         for col in range(2):
             x = left_margin_pts + (col * (l_pts + inner_gap_pts))
             y = SHEET_SIZE - top_gripper_pts - h_pts - (row * (h_pts + inner_gap_pts))
-            
             c.drawImage(reader, x, y, width=l_pts, height=h_pts)
-            
-            # Precision Cutting Guide
             c.setLineWidth(0.1)
             c.rect(x, y, l_pts, h_pts, stroke=1, fill=0)
 
@@ -153,29 +149,19 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
 st.set_page_config(page_title="GTO 9x9 Precision", layout="centered")
 st.title("🎯 GTO 9x9 Smart Plate Maker")
 
-st.info("Configured: 9x9\" Sheet | 10mm Gripper | 8mm Gaps")
-
-# Check if pytesseract is available
-try:
-    import pytesseract
-except ImportError:
-    st.warning("⚠️ OCR Library missing. Filenames will use defaults. Please add 'pytesseract' to requirements.txt")
-
-with st.expander("✨ Smart Options", expanded=True):
-    col_a, col_b = st.columns(2)
-    with col_a:
-        auto_crop = st.toggle("Auto-Crop to Black Box", value=True)
-    with col_b:
-        black_only = st.toggle("Black Plate Optimization", value=True)
-
 uploaded_file = st.file_uploader("Upload Image from Canva", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
+    # Options inside columns
+    col_a, col_b = st.columns(2)
+    with col_a: auto_crop = st.toggle("Auto-Crop to Black Box", value=True)
+    with col_b: black_only = st.toggle("Black Plate Optimization", value=True)
+
     if st.button('🚀 GENERATE 9x9 PDF', use_container_width=True):
         pdf_data, auto_name = generate_pdf(uploaded_file, auto_crop, black_only)
         st.session_state.pdf_data = pdf_data
         st.session_state.auto_name = auto_name
-        st.success(f"Filename Generated: {auto_name}")
+        st.success(f"Extracted: {auto_name}")
 
     if "pdf_data" in st.session_state:
         final_filename = f"{st.session_state.auto_name}.pdf"
