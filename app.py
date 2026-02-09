@@ -18,46 +18,64 @@ SHEET_SIZE = 9.0 * inch
 DPI = 450 
 
 def extract_file_info(img):
-    """Extracts text from image to generate a smart filename."""
+    """Refined OCR logic specifically for the provided label layout."""
     try:
         import pytesseract
-        # 1. Image Pre-processing for better reading
+        # Image Pre-processing for high accuracy
         img_for_ocr = img.convert("L")
         img_for_ocr = ImageOps.autocontrast(img_for_ocr, cutoff=2)
         
-        # 2. Extract Text
         text = pytesseract.image_to_string(img_for_ocr)
-        text_upper = text.upper()
+        text_raw = text.replace('\n', ' ')
+        text_up = text_raw.upper()
         
-        # 3. Default values
+        # 1. Extract Importer (Look after 'Imported By')
         importer = "Unknown_Importer"
-        exporter = "LGC" if "LGC" in text_upper else "Pacific" if "PACIFIC" in text_upper else "Unknown_Exporter"
+        imp_match = re.search(r"IMPORTED BY\s+([^0-9]+)", text_up)
+        if imp_match:
+            importer = imp_match.group(1).split("LOT")[0].strip()[:25]
+
+        # 2. Extract Exporter (Map Lucky Global to LGC)
+        exporter = "Unknown_Exporter"
+        if "LUCKY GLOBAL" in text_up:
+            exporter = "LGC"
+        elif "PACIFIC" in text_up:
+            exporter = "Pacific"
+        
+        # 3. Extract Weight
         weight = "NoWeight"
-        size = "NoSize"
+        w_match = re.search(r"(\d+)\s?KG", text_up)
+        if w_match:
+            weight = f"{w_match.group(1)}KG"
+
+        # 4. Extract Product Name (Onion/Potato)
+        product = "Product"
+        if "ONION" in text_up or "BAWANG" in text_up:
+            product = "Onion"
+        elif "POTATO" in text_up or "KENTANG" in text_up:
+            product = "Potato"
+
+        # 5. Extract Grade
         grade = "NoGrade"
+        g_match = re.search(r"GRADE\s?:\s?(\d+)", text_up)
+        if g_match:
+            grade = f"Grade_{g_match.group(1)}"
+        
+        # 6. Extract Size (Looking for the checked box or text)
+        size = "NoSize"
+        if "SAIZ/SIZE" in text_up:
+            # Check for M with a tick/mark or just general presence
+            if "M" in text_up: size = "M"
+            elif "S" in text_up: size = "S"
+            elif "L" in text_up: size = "L"
 
-        # 4. Search patterns
-        # Weight (look for numbers followed by KG)
-        w_match = re.search(r'(\d+\.?\d*)\s?KG', text_upper)
-        if w_match: weight = w_match.group(0).replace(" ", "")
+        # Clean up Importer name for file safety
+        importer = re.sub(r'[^A-Z0-9]', '_', importer.upper())
 
-        # Size (look for something like 100X100MM or 100 x 100 mm)
-        s_match = re.search(r'(\d+\s?[xX]\s?\d+\s?MM)', text_upper)
-        if s_match: size = s_match.group(0).replace(" ", "")
-
-        # Grade (look for 'Grade' followed by text/number)
-        g_match = re.search(r'GRADE[:\s]*([A-Z0-9]+)', text_upper)
-        if g_match: grade = g_match.group(1)
-
-        # Importer (Take the first line of the label)
-        lines = [l.strip() for l in text.split('\n') if len(l.strip()) > 3]
-        if lines:
-            importer = re.sub(r'[^a-zA-Z0-9]', '_', lines[0])[:20]
-
-        return f"{importer}, {exporter}, {weight}, {size}, {grade}"
+        return f"{importer}, {exporter}, {weight}, {product}, {size}, {grade}"
 
     except Exception:
-        return "Manual_Input_Required"
+        return "GTO_Plate_Output"
 
 def smart_crop_to_border(img):
     gray = img.convert("L")
@@ -100,8 +118,6 @@ def send_email_to_ctc(pdf_buffer, filename):
 
 def generate_pdf(uploaded_file, auto_crop, black_only):
     img = Image.open(uploaded_file)
-    
-    # Run OCR before cropping
     extracted_name = extract_file_info(img)
     
     if auto_crop:
@@ -152,7 +168,6 @@ st.title("🎯 GTO 9x9 Smart Plate Maker")
 uploaded_file = st.file_uploader("Upload Image from Canva", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
-    # Options inside columns
     col_a, col_b = st.columns(2)
     with col_a: auto_crop = st.toggle("Auto-Crop to Black Box", value=True)
     with col_b: black_only = st.toggle("Black Plate Optimization", value=True)
@@ -161,7 +176,7 @@ if uploaded_file:
         pdf_data, auto_name = generate_pdf(uploaded_file, auto_crop, black_only)
         st.session_state.pdf_data = pdf_data
         st.session_state.auto_name = auto_name
-        st.success(f"Extracted: {auto_name}")
+        st.success(f"Filename: {auto_name}")
 
     if "pdf_data" in st.session_state:
         final_filename = f"{st.session_state.auto_name}.pdf"
