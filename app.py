@@ -9,12 +9,46 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+import pytesseract  # Requires Tesseract OCR installed
+import re
 
 # --- HARD-CODED PRECISION SIZES ---
 LABEL_W_IN = 4.072965
 LABEL_H_IN = 2.56757
 SHEET_SIZE = 9.0 * inch 
 DPI = 450 
+
+def extract_file_info(img):
+    """Extracts text from image to generate a smart filename."""
+    try:
+        # Pre-process image for better OCR
+        gray = img.convert("L")
+        text = pytesseract.image_to_string(gray)
+        
+        # Default values
+        importer = "Unknown Importer"
+        exporter = "LGC" if "LGC" in text.upper() else "Pacific" if "PACIFIC" in text.upper() else "Unknown Exporter"
+        weight = "No Weight"
+        size = "No Size"
+        grade = "No Grade"
+
+        # Simple Regex to find patterns (adjust based on your typical label layout)
+        weight_match = re.search(r'(\d+\s?KG)', text, re.IGNORECASE)
+        if weight_match: weight = weight_match.group(1)
+
+        size_match = re.search(r'(\d+[\s?xX]\d+\s?mm)', text, re.IGNORECASE)
+        if size_match: size = size_match.group(1)
+
+        grade_match = re.search(r'(Grade[:\s]+)([A-Za-z0-9\s]+)', text, re.IGNORECASE)
+        if grade_match: grade = grade_match.group(2).strip().split('\n')[0]
+
+        # Attempt to get first line as Importer if not found
+        lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 3]
+        if lines: importer = lines[0]
+
+        return f"{importer}, {exporter}, {weight}, {size}, {grade}"
+    except Exception:
+        return "GTO_9x9_Plate_Output"
 
 def smart_crop_to_border(img):
     gray = img.convert("L")
@@ -26,7 +60,7 @@ def smart_crop_to_border(img):
         return img.crop(bbox)
     return img
 
-def send_email_to_ctc(pdf_buffer):
+def send_email_to_ctc(pdf_buffer, filename):
     try:
         SENDER_EMAIL = st.secrets["email_user"]
         SENDER_PASSWORD = st.secrets["email_password"]
@@ -34,7 +68,7 @@ def send_email_to_ctc(pdf_buffer):
         SMTP_PORT = st.secrets.get("smtp_port", 465)
         
         RECEIVER_EMAIL = "colorxctp@yahoo.com"
-        SUBJECT = "Rabnawaz Plate GTO"
+        SUBJECT = f"Plate Order: {filename}"
 
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
@@ -44,7 +78,7 @@ def send_email_to_ctc(pdf_buffer):
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(pdf_buffer.getvalue())
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', 'attachment; filename="Rabnawaz_9x9_GTO.pdf"')
+        part.add_header('Content-Disposition', f'attachment; filename="{filename}.pdf"')
         msg.attach(part)
 
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
@@ -57,6 +91,10 @@ def send_email_to_ctc(pdf_buffer):
 
 def generate_pdf(uploaded_file, auto_crop, black_only):
     img = Image.open(uploaded_file)
+    
+    # Generate Smart Filename
+    extracted_name = extract_file_info(img)
+    
     if auto_crop:
         img = smart_crop_to_border(img)
 
@@ -92,7 +130,6 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
     for row in range(3): 
         for col in range(2):
             x = left_margin_pts + (col * (l_pts + inner_gap_pts))
-            # Start after 10mm gripper, then subtract current row's height and 8mm internal gaps
             y = SHEET_SIZE - top_gripper_pts - h_pts - (row * (h_pts + inner_gap_pts))
             
             c.drawImage(reader, x, y, width=l_pts, height=h_pts)
@@ -104,7 +141,7 @@ def generate_pdf(uploaded_file, auto_crop, black_only):
     c.showPage()
     c.save()
     pdf_output.seek(0)
-    return pdf_output
+    return pdf_output, extracted_name
 
 # --- UI ---
 st.set_page_config(page_title="GTO 9x9 Precision", layout="centered")
@@ -123,14 +160,24 @@ uploaded_file = st.file_uploader("Upload Image from Canva", type=['jpg', 'png', 
 
 if uploaded_file:
     if st.button('🚀 GENERATE 9x9 PDF', use_container_width=True):
-        st.session_state.pdf_data = generate_pdf(uploaded_file, auto_crop, black_only)
-        st.success("9x9 PDF Generated!")
+        pdf_data, auto_name = generate_pdf(uploaded_file, auto_crop, black_only)
+        st.session_state.pdf_data = pdf_data
+        st.session_state.auto_name = auto_name
+        st.success(f"Generated: {auto_name}")
 
     if "pdf_data" in st.session_state:
-        st.download_button("📥 DOWNLOAD PDF", data=st.session_state.pdf_data, file_name="GTO_9x9_Sheet.pdf", mime="application/pdf", use_container_width=True)
+        final_filename = f"{st.session_state.auto_name}.pdf"
+        
+        st.download_button(
+            label="📥 DOWNLOAD PDF", 
+            data=st.session_state.pdf_data, 
+            file_name=final_filename, 
+            mime="application/pdf", 
+            use_container_width=True
+        )
         
         if st.button('📧 SEND TO CTC (colorxctp@yahoo.com)', use_container_width=True):
             with st.spinner('Sending...'):
-                if send_email_to_ctc(st.session_state.pdf_data):
+                if send_email_to_ctc(st.session_state.pdf_data, st.session_state.auto_name):
                     st.balloons()
                     st.success("Sent to CTC plant!")
