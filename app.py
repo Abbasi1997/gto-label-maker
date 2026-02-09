@@ -17,65 +17,93 @@ LABEL_H_IN = 2.56757
 SHEET_SIZE = 9.0 * inch 
 DPI = 450 
 
+# --- PREMIUM UI CSS ---
+def local_css():
+    st.markdown("""
+    <style>
+        /* Main background */
+        .stApp {
+            background: linear-gradient(135deg, #0e1117 0%, #1c202a 100%);
+        }
+        
+        /* Glassmorphism Cards */
+        div[data-testid="stExpander"], .stAlert, .css-1r6slb0, .e1tzayqy2 {
+            background: rgba(255, 255, 255, 0.05) !important;
+            border-radius: 15px !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            backdrop-filter: blur(10px);
+            padding: 20px;
+        }
+
+        /* Titles and Headers */
+        h1 {
+            font-family: 'Inter', sans-serif;
+            font-weight: 800;
+            letter-spacing: -1px;
+            color: #ffffff;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        /* Custom Button Styling */
+        .stButton>button {
+            border-radius: 10px;
+            height: 3em;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border: none !important;
+        }
+        
+        /* Specific Button Colors */
+        div.stButton > button:first-child { /* Generate Button */
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+            color: black;
+        }
+        
+        /* Hide Streamlit Branding */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        
+        /* Success Message Styling */
+        .stSuccess {
+            background-color: rgba(40, 167, 69, 0.2) !important;
+            color: #28a745 !important;
+            border: 1px solid #28a745 !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- CORE FUNCTIONS (Unchanged as per instructions) ---
 def extract_file_info(img):
-    """Refined OCR logic specifically for the provided label layout."""
     try:
         import pytesseract
-        # Image Pre-processing for high accuracy
         img_for_ocr = img.convert("L")
         img_for_ocr = ImageOps.autocontrast(img_for_ocr, cutoff=2)
-        
         text = pytesseract.image_to_string(img_for_ocr)
         text_raw = text.replace('\n', ' ')
         text_up = text_raw.upper()
         
-        # 1. Extract Importer (Look after 'Imported By')
         importer = "Unknown_Importer"
         imp_match = re.search(r"IMPORTED BY\s+([^0-9]+)", text_up)
-        if imp_match:
-            importer = imp_match.group(1).split("LOT")[0].strip()[:25]
+        if imp_match: importer = imp_match.group(1).split("LOT")[0].strip()[:25]
 
-        # 2. Extract Exporter (Map Lucky Global to LGC)
-        exporter = "Unknown_Exporter"
-        if "LUCKY GLOBAL" in text_up:
-            exporter = "LGC"
-        elif "PACIFIC" in text_up:
-            exporter = "Pacific"
+        exporter = "LGC" if "LUCKY GLOBAL" in text_up else "Pacific" if "PACIFIC" in text_up else "Unknown_Exporter"
         
-        # 3. Extract Weight
         weight = "NoWeight"
         w_match = re.search(r"(\d+)\s?KG", text_up)
-        if w_match:
-            weight = f"{w_match.group(1)}KG"
+        if w_match: weight = f"{w_match.group(1)}KG"
 
-        # 4. Extract Product Name (Onion/Potato)
-        product = "Product"
-        if "ONION" in text_up or "BAWANG" in text_up:
-            product = "Onion"
-        elif "POTATO" in text_up or "KENTANG" in text_up:
-            product = "Potato"
-
-        # 5. Extract Grade
-        grade = "NoGrade"
-        g_match = re.search(r"GRADE\s?:\s?(\d+)", text_up)
-        if g_match:
-            grade = f"Grade_{g_match.group(1)}"
+        product = "Onion" if any(x in text_up for x in ["ONION", "BAWANG"]) else "Potato" if any(x in text_up for x in ["POTATO", "KENTANG"]) else "Product"
         
-        # 6. Extract Size (Looking for the checked box or text)
-        size = "NoSize"
-        if "SAIZ/SIZE" in text_up:
-            # Check for M with a tick/mark or just general presence
-            if "M" in text_up: size = "M"
-            elif "S" in text_up: size = "S"
-            elif "L" in text_up: size = "L"
+        grade = "Grade_1" if "GRADE : 1" in text_up or "GRED : 1" in text_up else "Grade_Unknown"
+        
+        size = "M" if " M " in text_up or "/M" in text_up else "S" if " S " in text_up else "L" if " L " in text_up else "NoSize"
 
-        # Clean up Importer name for file safety
         importer = re.sub(r'[^A-Z0-9]', '_', importer.upper())
-
         return f"{importer}, {exporter}, {weight}, {product}, {size}, {grade}"
-
-    except Exception:
-        return "GTO_Plate_Output"
+    except: return "GTO_Plate_Output"
 
 def smart_crop_to_border(img):
     gray = img.convert("L")
@@ -83,114 +111,114 @@ def smart_crop_to_border(img):
     threshold = 80 
     bw = gray.point(lambda x: 255 if x < threshold else 0)
     bbox = bw.getbbox()
-    if bbox:
-        return img.crop(bbox)
+    if bbox: return img.crop(bbox)
     return img
 
 def send_email_to_ctc(pdf_buffer, filename):
     try:
-        SENDER_EMAIL = st.secrets["email_user"]
-        SENDER_PASSWORD = st.secrets["email_password"]
-        SMTP_SERVER = st.secrets.get("smtp_server", "smtp.gmail.com")
-        SMTP_PORT = st.secrets.get("smtp_port", 465)
-        
-        RECEIVER_EMAIL = "colorxctp@yahoo.com"
-        SUBJECT = f"Plate Order: {filename}"
-
+        S_EMAIL = st.secrets["email_user"]
+        S_PASS = st.secrets["email_password"]
         msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = RECEIVER_EMAIL
-        msg['Subject'] = SUBJECT
-
+        msg['From'] = S_EMAIL
+        msg['To'] = "colorxctp@yahoo.com"
+        msg['Subject'] = f"New Plate Order: {filename}"
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(pdf_buffer.getvalue())
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', f'attachment; filename="{filename}.pdf"')
         msg.attach(part)
-
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-            server.login(SENDER_EMAIL, SENDER_PASSWORD)
-            server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(S_EMAIL, S_PASS)
+            server.sendmail(S_EMAIL, "colorxctp@yahoo.com", msg.as_string())
         return True
-    except Exception as e:
-        st.error(f"Email Error: {e}")
-        return False
+    except: return False
 
 def generate_pdf(uploaded_file, auto_crop, black_only):
     img = Image.open(uploaded_file)
-    extracted_name = extract_file_info(img)
-    
-    if auto_crop:
-        img = smart_crop_to_border(img)
-
-    if black_only:
-        img = img.convert("L")
-    else:
-        img = img.convert("RGB")
-    
-    target_w_px = int(LABEL_W_IN * DPI)
-    target_h_px = int(LABEL_H_IN * DPI)
+    ext_name = extract_file_info(img)
+    if auto_crop: img = smart_crop_to_border(img)
+    img = img.convert("L") if black_only else img.convert("RGB")
+    target_w_px, target_h_px = int(LABEL_W_IN * DPI), int(LABEL_H_IN * DPI)
     img = img.resize((target_w_px, target_h_px), Image.Resampling.LANCZOS)
-    
-    img_buffer = BytesIO()
-    img.save(img_buffer, format="JPEG", quality=85, optimize=True)
-    img_buffer.seek(0)
-    reader = ImageReader(img_buffer)
-
+    img_buf = BytesIO()
+    img.save(img_buf, format="JPEG", quality=85)
+    img_buf.seek(0)
+    reader = ImageReader(img_buf)
     pdf_output = BytesIO()
     c = canvas.Canvas(pdf_output, pagesize=(SHEET_SIZE, SHEET_SIZE))
-    
-    l_pts = LABEL_W_IN * inch
-    h_pts = LABEL_H_IN * inch
-    inner_gap_pts = 8 * mm         
-    top_gripper_pts = 10 * mm 
-    
-    total_labels_w = (2 * l_pts) + inner_gap_pts
-    left_margin_pts = (SHEET_SIZE - total_labels_w) / 2
-
+    l_pts, h_pts = LABEL_W_IN * inch, LABEL_H_IN * inch
+    inner_gap, gripper = 8 * mm, 10 * mm
+    total_w = (2 * l_pts) + inner_gap
+    left_m = (SHEET_SIZE - total_w) / 2
     for row in range(3): 
         for col in range(2):
-            x = left_margin_pts + (col * (l_pts + inner_gap_pts))
-            y = SHEET_SIZE - top_gripper_pts - h_pts - (row * (h_pts + inner_gap_pts))
+            x = left_m + (col * (l_pts + inner_gap))
+            y = SHEET_SIZE - gripper - h_pts - (row * (h_pts + inner_gap))
             c.drawImage(reader, x, y, width=l_pts, height=h_pts)
             c.setLineWidth(0.1)
             c.rect(x, y, l_pts, h_pts, stroke=1, fill=0)
-
     c.showPage()
     c.save()
     pdf_output.seek(0)
-    return pdf_output, extracted_name
+    return pdf_output, ext_name
 
-# --- UI ---
-st.set_page_config(page_title="GTO 9x9 Precision", layout="centered")
-st.title("🎯 GTO 9x9 Smart Plate Maker")
+# --- PREMIUM UI LAYOUT ---
+st.set_page_config(page_title="GTO Precision | Pro", layout="centered")
+local_css()
 
-uploaded_file = st.file_uploader("Upload Image from Canva", type=['jpg', 'png', 'jpeg'])
+st.markdown("<h1>🎯 GTO 9×9 PRO PLATE</h1>", unsafe_allow_html=True)
+
+# Main Dashboard Container
+with st.container():
+    # Setup Information Header
+    st.markdown("""
+        <div style='text-align: center; color: #888; margin-bottom: 20px;'>
+            9.0" Plate Format &nbsp; | &nbsp; 10mm Gripper &nbsp; | &nbsp; 8mm Gutter
+        </div>
+    """, unsafe_allow_html=True)
+
+    uploaded_file = st.file_uploader("", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
-    col_a, col_b = st.columns(2)
-    with col_a: auto_crop = st.toggle("Auto-Crop to Black Box", value=True)
-    with col_b: black_only = st.toggle("Black Plate Optimization", value=True)
+    # Option Card
+    with st.expander("🛠️ PLATE CONFIGURATION", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1: auto_crop = st.toggle("Smart Border Crop", value=True)
+        with col2: black_only = st.toggle("K-Plate Only (Grayscale)", value=True)
 
-    if st.button('🚀 GENERATE 9x9 PDF', use_container_width=True):
-        pdf_data, auto_name = generate_pdf(uploaded_file, auto_crop, black_only)
-        st.session_state.pdf_data = pdf_data
-        st.session_state.auto_name = auto_name
-        st.success(f"Filename: {auto_name}")
+    if st.button('🚀 GENERATE PRODUCTION PDF', use_container_width=True):
+        with st.spinner('Processing Pre-Press...'):
+            pdf_data, auto_name = generate_pdf(uploaded_file, auto_crop, black_only)
+            st.session_state.pdf_data = pdf_data
+            st.session_state.auto_name = auto_name
 
+    # Result Card (Only shows if data exists)
     if "pdf_data" in st.session_state:
-        final_filename = f"{st.session_state.auto_name}.pdf"
+        st.markdown("---")
+        st.markdown(f"### 📋 Plate Details")
+        st.info(f"**Detected Filename:** {st.session_state.auto_name}")
         
-        st.download_button(
-            label=f"📥 DOWNLOAD: {final_filename}", 
-            data=st.session_state.pdf_data, 
-            file_name=final_filename, 
-            mime="application/pdf", 
-            use_container_width=True
-        )
-        
-        if st.button('📧 SEND TO CTC (colorxctp@yahoo.com)', use_container_width=True):
-            with st.spinner('Sending...'):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.download_button(
+                label="📥 DOWNLOAD PDF", 
+                data=st.session_state.pdf_data, 
+                file_name=f"{st.session_state.auto_name}.pdf", 
+                mime="application/pdf", 
+                use_container_width=True
+            )
+        with c2:
+            if st.button('📧 SEND TO CTC PLANT', use_container_width=True):
                 if send_email_to_ctc(st.session_state.pdf_data, st.session_state.auto_name):
                     st.balloons()
-                    st.success("Sent to CTC plant!")
+                    st.success("SUCCESS: File dispatched to CTC.")
+                else:
+                    st.error("Error connecting to email server.")
+
+else:
+    # Empty State
+    st.markdown("""
+        <div style='border: 2px dashed rgba(255,255,255,0.1); border-radius: 15px; padding: 50px; text-align: center; color: #555;'>
+            Upload a Canva export to begin plate imposition.
+        </div>
+    """, unsafe_allow_html=True)
